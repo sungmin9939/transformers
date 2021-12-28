@@ -94,8 +94,8 @@ class ViTEmbeddings(nn.Module):
         class_pos_embed = self.position_embeddings[:, 0]
         patch_pos_embed = self.position_embeddings[:, 1:]
         dim = embeddings.shape[-1]
-        h0 = height // self.config.patch_size
-        w0 = width // self.config.patch_size
+        h0 = (height-8)*2 // self.config.patch_size
+        w0 = (width-8)*2 // self.config.patch_size
         # we add a small number to avoid floating point error in the interpolation
         # see discussion at https://github.com/facebookresearch/dino/issues/8
         h0, w0 = h0 + 0.1, w0 + 0.1
@@ -128,8 +128,8 @@ class ViTEmbeddings(nn.Module):
         class_mod_embed = modality_embeddings[:, 0]
         patch_mod_embed = modality_embeddings[:, 1:]
         dim = embeddings.shape[-1]
-        h0 = height // self.config.patch_size
-        w0 = width // self.config.patch_size
+        h0 = (height-8)*2 // self.config.patch_size
+        w0 = (width-8)*2 // self.config.patch_size
         # we add a small number to avoid floating point error in the interpolation
         # see discussion at https://github.com/facebookresearch/dino/issues/8
         h0, w0 = h0 + 0.1, w0 + 0.1
@@ -175,11 +175,12 @@ class PatchEmbeddings(nn.Module):
         image_size = to_2tuple(image_size)
         patch_size = to_2tuple(patch_size)
         num_patches = (image_size[1] // patch_size[1]) * (image_size[0] // patch_size[0])
+        stride = tuple(int(ti/2) for ti in patch_size)
         self.image_size = image_size
         self.patch_size = patch_size
         self.num_patches = num_patches
 
-        self.projection = nn.Conv2d(num_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.projection = nn.Conv2d(num_channels, embed_dim, kernel_size=patch_size, stride=stride)
 
     def forward(self, pixel_values, interpolate_pos_encoding=False):
         batch_size, num_channels, height, width = pixel_values.shape
