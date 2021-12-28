@@ -73,6 +73,8 @@ class ViTEmbeddings(nn.Module):
         )
         num_patches = self.patch_embeddings.num_patches
         self.position_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, config.hidden_size))
+        self.rgb_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, config.hidden_size))
+        self.ir_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, config.hidden_size))
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.config = config
 
@@ -107,7 +109,41 @@ class ViTEmbeddings(nn.Module):
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
         return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
 
-    def forward(self, pixel_values, interpolate_pos_encoding=False):
+    def interpolate_mod_encoding(self, embeddings, height, width, modal):
+        """
+        This method allows to interpolate the pre-trained position encodings, to be able to use the model on higher
+        resolution images.
+
+        Source:
+        https://github.com/facebookresearch/dino/blob/de9ee3df6cf39fac952ab558447af1fa1365362a/vision_transformer.py#L174
+        """
+        if modal == 1: #RGB
+            modality_embeddings = self.rgb_embeddings
+        elif modal == 2: #IR
+            modality_embeddings = self.ir_embeddings
+        npatch = embeddings.shape[1] - 1
+        N = modality_embeddings.shape[1] - 1
+        if npatch == N and height == width:
+            return modality_embeddings
+        class_mod_embed = modality_embeddings[:, 0]
+        patch_mod_embed = modality_embeddings[:, 1:]
+        dim = embeddings.shape[-1]
+        h0 = height // self.config.patch_size
+        w0 = width // self.config.patch_size
+        # we add a small number to avoid floating point error in the interpolation
+        # see discussion at https://github.com/facebookresearch/dino/issues/8
+        h0, w0 = h0 + 0.1, w0 + 0.1
+        patch_mod_embed = nn.functional.interpolate(
+            patch_mod_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
+            scale_factor=(h0 / math.sqrt(N), w0 / math.sqrt(N)),
+            mode="bicubic",
+            align_corners=False,
+        )
+        assert int(h0) == patch_mod_embed.shape[-2] and int(w0) == patch_mod_embed.shape[-1]
+        patch_mod_embed = patch_mod_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        return torch.cat((class_mod_embed.unsqueeze(0), patch_mod_embed), dim=1)
+
+    def forward(self, pixel_values, interpolate_pos_encoding=False, modal=1):
         batch_size, num_channels, height, width = pixel_values.shape
         embeddings = self.patch_embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
 
@@ -117,7 +153,7 @@ class ViTEmbeddings(nn.Module):
 
         # add positional encoding to each token
         if interpolate_pos_encoding:
-            embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width)
+            embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width) + self.interpolate_mod_encoding(embeddings, height, width, modal)
         else:
             embeddings = embeddings + self.position_embeddings
 
@@ -506,11 +542,13 @@ class ViTModel(ViTPreTrainedModel):
     def forward(
         self,
         pixel_values=None,
+        modal=1,
         head_mask=None,
         output_attentions=None,
         output_hidden_states=None,
         interpolate_pos_encoding=None,
         return_dict=None,
+        
     ):
         r"""
         Returns:
@@ -548,7 +586,7 @@ class ViTModel(ViTPreTrainedModel):
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
-        embedding_output = self.embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
+        embedding_output = self.embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding, modal=modal)
 
         encoder_outputs = self.encoder(
             embedding_output,
