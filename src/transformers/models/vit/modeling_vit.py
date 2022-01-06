@@ -73,8 +73,13 @@ class ViTEmbeddings(nn.Module):
         )
         num_patches = self.patch_embeddings.num_patches
         self.position_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, config.hidden_size))
+        self.rgb_embeddings = nn.Parameter(torch.FloatTensor([1]))
+        self.ir_embeddings = nn.Parameter(torch.FloatTensor([2]))
+        '''
         self.rgb_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, config.hidden_size))
         self.ir_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, config.hidden_size))
+        '''
+        
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.config = config
 
@@ -146,14 +151,22 @@ class ViTEmbeddings(nn.Module):
     def forward(self, pixel_values, interpolate_pos_encoding=False, modal=1):
         batch_size, num_channels, height, width = pixel_values.shape
         embeddings = self.patch_embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
+        
 
         # add the [CLS] token to the embedded patch tokens
         cls_tokens = self.cls_token.expand(batch_size, -1, -1)
         embeddings = torch.cat((cls_tokens, embeddings), dim=1)
+        
+        # add modality embeddings according to the modality of the input
+        _, num_patches, hidden_dim = embeddings.shape
+        if modal == 1:
+            m_embeddings = self.rgb_embeddings.expand(batch_size, num_patches, hidden_dim)
+        elif modal == 2:
+            m_embeddings = self.ir_embeddings.expand(batch_size, num_patches, hidden_dim)
 
-        # add positional encoding to each token
+        # add positional encoding and modality embeddings to each token
         if interpolate_pos_encoding:
-            embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width) + self.interpolate_mod_encoding(embeddings, height, width, modal)
+            embeddings = embeddings + self.interpolate_pos_encoding(embeddings, height, width) + m_embeddings
         else:
             embeddings = embeddings + self.position_embeddings
 
