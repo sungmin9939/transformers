@@ -99,8 +99,10 @@ class ViTEmbeddings(nn.Module):
         class_pos_embed = self.position_embeddings[:, 0]
         patch_pos_embed = self.position_embeddings[:, 1:]
         dim = embeddings.shape[-1]
-        h0 = (height-8)*2 // self.config.patch_size
-        w0 = (width-8)*2 // self.config.patch_size
+        #h0 = (height-8)*2 // self.config.patch_size
+        #w0 = (width-8)*2 // self.config.patch_size
+        h0 = (height) // self.config.patch_size
+        w0 = (width) // self.config.patch_size
         # we add a small number to avoid floating point error in the interpolation
         # see discussion at https://github.com/facebookresearch/dino/issues/8
         h0, w0 = h0 + 0.1, w0 + 0.1
@@ -133,8 +135,10 @@ class ViTEmbeddings(nn.Module):
         class_mod_embed = modality_embeddings[:, 0]
         patch_mod_embed = modality_embeddings[:, 1:]
         dim = embeddings.shape[-1]
-        h0 = (height-8)*2 // self.config.patch_size
-        w0 = (width-8)*2 // self.config.patch_size
+        #h0 = (height-8)*2 // self.config.patch_size
+        #w0 = (width-8)*2 // self.config.patch_size
+        h0 = (height) // self.config.patch_size
+        w0 = (width) // self.config.patch_size
         # we add a small number to avoid floating point error in the interpolation
         # see discussion at https://github.com/facebookresearch/dino/issues/8
         h0, w0 = h0 + 0.1, w0 + 0.1
@@ -148,9 +152,17 @@ class ViTEmbeddings(nn.Module):
         patch_mod_embed = patch_mod_embed.permute(0, 2, 3, 1).view(1, -1, dim)
         return torch.cat((class_mod_embed.unsqueeze(0), patch_mod_embed), dim=1)
 
-    def forward(self, pixel_values, interpolate_pos_encoding=False, modal=1):
-        batch_size, num_channels, height, width = pixel_values.shape
-        embeddings = self.patch_embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
+    def forward(self, pixel_values, interpolate_pos_encoding=False, modal=1, pass_embedding=True):
+        if pass_embedding:
+            embeddings = pixel_values
+        else:        
+            embeddings = self.patch_embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding)
+        
+        #batch_size, num_channels, height, width = pixel_values.shape
+        batch_size, num_patches, hidden_dim = embeddings.shape
+        if num_patches == 128:
+            height = 256
+            width = 128
         
 
         # add the [CLS] token to the embedded patch tokens
@@ -158,11 +170,12 @@ class ViTEmbeddings(nn.Module):
         embeddings = torch.cat((cls_tokens, embeddings), dim=1)
         
         # add modality embeddings according to the modality of the input
-        _, num_patches, hidden_dim = embeddings.shape
+        
         if modal == 1:
-            m_embeddings = self.rgb_embeddings.expand(batch_size, num_patches, hidden_dim)
+            m_embeddings = self.rgb_embeddings.expand(batch_size, num_patches+1, hidden_dim)
         elif modal == 2:
-            m_embeddings = self.ir_embeddings.expand(batch_size, num_patches, hidden_dim)
+            m_embeddings = self.ir_embeddings.expand(batch_size, num_patches+1, hidden_dim)
+
 
         # add positional encoding and modality embeddings to each token
         if interpolate_pos_encoding:
@@ -530,7 +543,7 @@ class ViTModel(ViTPreTrainedModel):
     def __init__(self, config, add_pooling_layer=True):
         super().__init__(config)
         self.config = config
-
+    
         self.embeddings = ViTEmbeddings(config)
         self.encoder = ViTEncoder(config)
 
@@ -562,6 +575,7 @@ class ViTModel(ViTPreTrainedModel):
         output_hidden_states=None,
         interpolate_pos_encoding=None,
         return_dict=None,
+        pass_embedding = True
         
     ):
         r"""
@@ -600,7 +614,7 @@ class ViTModel(ViTPreTrainedModel):
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
         head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
 
-        embedding_output = self.embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding, modal=modal)
+        embedding_output = self.embeddings(pixel_values, interpolate_pos_encoding=interpolate_pos_encoding, modal=modal, pass_embedding=pass_embedding)
 
         encoder_outputs = self.encoder(
             embedding_output,
